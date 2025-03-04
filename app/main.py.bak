@@ -1,0 +1,735 @@
+"""
+Main FastAPI application.
+
+This module contains the main FastAPI application and its configuration.
+"""
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
+from fastapi.openapi.utils import get_openapi
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
+from pathlib import Path
+import os
+
+from app.core.config import settings
+from app.api.routers import general, pokemon
+
+# Create the FastAPI application
+app = FastAPI(
+    title=settings.PROJECT_NAME,
+    description="API for interacting with Pokemon AI Agents",
+    version="1.0.0",
+    docs_url=None,  # Disable default docs URL
+    redoc_url=None,  # Disable default redoc URL
+    contact={
+        "name": "Pokemon AI Agents Team",
+        "url": "https://github.com/yourusername/pokemon-ai-agents",
+        "email": "example@example.com",
+    },
+    license_info={
+        "name": "MIT License",
+        "url": "https://opensource.org/licenses/MIT",
+    },
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.BACKEND_CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Mount static files directory
+static_dir = Path(__file__).parent.parent / "static"
+os.makedirs(static_dir, exist_ok=True)  # Create the directory if it doesn't exist
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+# Include routers
+app.include_router(general.router)
+app.include_router(pokemon.router, prefix=settings.API_V1_STR)
+
+# Custom OpenAPI schema
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    
+    openapi_schema = get_openapi(
+        title=settings.PROJECT_NAME,
+        version="1.0.0",
+        description="""## Pokemon AI Agents API
+
+This API provides endpoints to interact with the Pokemon AI Agents system powered by LLMs. 
+
+### Features
+
+- **Chat Endpoint**: Process general queries and Pokemon-related queries using AI
+- **Battle Endpoint**: Analyze battles between two Pokemon with detailed statistics and reasoning
+- **Health Check**: Verify the API is running correctly
+
+### Technical Details
+
+- Built with FastAPI and LangChain
+- Uses OpenAI's GPT models for natural language processing
+- Integrates with PokeAPI for accurate Pokemon data
+- Implements Tavily Search API for general knowledge queries
+
+### Authentication
+
+No authentication is required to use this API.
+
+### Rate Limiting
+
+Please be mindful of usage as the API uses OpenAI's API which has rate limits and costs associated with it.
+
+### Error Handling
+
+The API returns standard HTTP status codes:
+- 200: Success
+- 404: Resource not found
+- 422: Validation error
+- 500: Server error
+
+### Example Usage
+
+```python
+import requests
+import json
+
+# Chat endpoint example
+response = requests.post(
+    "http://localhost:8088/api/v1/pokemon/chat",
+    json={"message": "Tell me about Pikachu"}
+)
+print(json.dumps(response.json(), indent=2))
+
+# Battle endpoint example
+response = requests.get(
+    "http://localhost:8088/api/v1/pokemon/battle?pokemon1=pikachu&pokemon2=bulbasaur"
+)
+print(json.dumps(response.json(), indent=2))
+```
+        """,
+        routes=app.routes,
+    )
+    
+    # Add custom tags metadata
+    openapi_schema["tags"] = [
+        {
+            "name": "Pokemon",
+            "description": "Endpoints for Pokemon research and battle analysis using AI",
+            "externalDocs": {
+                "description": "Pokemon API Documentation",
+                "url": "https://pokeapi.co/docs/v2"
+            }
+        },
+        {
+            "name": "General",
+            "description": "General endpoints for the application including health checks and documentation"
+        },
+    ]
+    
+    # Add examples to schema
+    if "paths" in openapi_schema:
+        # Chat endpoint examples
+        if f"{settings.API_V1_STR}/pokemon/chat" in openapi_schema["paths"]:
+            chat_path = openapi_schema["paths"][f"{settings.API_V1_STR}/pokemon/chat"]
+            
+            if "post" in chat_path:
+                post_op = chat_path["post"]
+                
+                # Remove all examples from chat endpoint request
+                if "requestBody" in post_op and "content" in post_op["requestBody"]:
+                    # Remove example field to avoid hardcoded message in schema
+                    if "example" in post_op["requestBody"]["content"]["application/json"]:
+                        del post_op["requestBody"]["content"]["application/json"]["example"]
+                    
+                    # Remove examples field to avoid hardcoded Pokemon examples in UI
+                    if "examples" in post_op["requestBody"]["content"]["application/json"]:
+                        del post_op["requestBody"]["content"]["application/json"]["examples"]
+                    
+                    # Modify schema to use a generic format
+                    if "schema" in post_op["requestBody"]["content"]["application/json"]:
+                        post_op["requestBody"]["content"]["application/json"]["schema"] = {
+                            "type": "object",
+                            "properties": {
+                                "message": {
+                                    "type": "string",
+                                    "description": "User's message or query"
+                                }
+                            },
+                            "required": ["message"]
+                        }
+                
+                # Add example responses
+                if "responses" in post_op and "200" in post_op["responses"]:
+                    post_op["responses"]["200"]["content"] = {
+                        "application/json": {
+                            "examples": {
+                                "Pokemon Research Response": {
+                                    "summary": "Response for Pokemon research",
+                                    "description": "Detailed information about a Pokemon",
+                                    "value": {
+                                        "response": {
+                                            "supervisor_result": {
+                                                "answer": "Pikachu is an Electric-type Pokemon...",
+                                                "reflection": {"thoughts": "This is a query about Pikachu..."},
+                                                "is_pokemon_query": True,
+                                                "pokemon_names": ["pikachu"]
+                                            },
+                                            "pokemon_research": {
+                                                "pikachu": {
+                                                    "name": "Pikachu",
+                                                    "base_stats": {"hp": 35, "attack": 55, "defense": 40, "special_attack": 50, "special_defense": 50, "speed": 90},
+                                                    "types": ["Electric"],
+                                                    "abilities": ["Static", "Lightning Rod"],
+                                                    "height": 0.4,
+                                                    "weight": 6.0,
+                                                    "pokemon_details": ["Pikachu is an Electric-type Pokemon..."],
+                                                    "research_queries": ["Pikachu evolution", "Pikachu in the anime"]
+                                                }
+                                            },
+                                            "battle_analysis": None
+                                        }
+                                    }
+                                },
+                                "Battle Query Response": {
+                                    "summary": "Response for battle analysis",
+                                    "description": "Analysis of a battle between two Pokemon",
+                                    "value": {
+                                        "response": {
+                                            "supervisor_result": {
+                                                "answer": "In a battle between Pikachu and Bulbasaur...",
+                                                "reflection": {"thoughts": "This is a battle query..."},
+                                                "is_pokemon_query": True,
+                                                "pokemon_names": ["pikachu", "bulbasaur"]
+                                            },
+                                            "pokemon_research": {
+                                                "pikachu": {"name": "Pikachu", "types": ["Electric"]},
+                                                "bulbasaur": {"name": "Bulbasaur", "types": ["Grass", "Poison"]}
+                                            },
+                                            "battle_analysis": {
+                                                "pokemon_1": "pikachu",
+                                                "pokemon_2": "bulbasaur",
+                                                "analysis": "Pikachu has a speed advantage...",
+                                                "reasoning": "Based on type matchups...",
+                                                "winner": "pikachu"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+        
+        # Battle endpoint examples
+        if f"{settings.API_V1_STR}/pokemon/battle" in openapi_schema["paths"]:
+            battle_path = openapi_schema["paths"][f"{settings.API_V1_STR}/pokemon/battle"]
+            
+            if "get" in battle_path:
+                get_op = battle_path["get"]
+                
+                # Remove all examples from battle endpoint parameters
+                if "parameters" in get_op:
+                    for param in get_op["parameters"]:
+                        # Remove example field to avoid hardcoded Pokemon in schema
+                        if "example" in param:
+                            del param["example"]
+                        
+                        # Remove examples field to avoid hardcoded Pokemon examples in UI
+                        if "examples" in param:
+                            del param["examples"]
+                        
+                        # Add generic schema property
+                        if param["name"] in ["pokemon1", "pokemon2"]:
+                            param["schema"] = {"type": "string"}
+                
+                # Add example responses
+                # Remove response examples from battle endpoint
+                if "responses" in get_op and "200" in get_op["responses"]:
+                    # Remove examples and replace with generic schema
+                    if "content" in get_op["responses"]["200"]:
+                        get_op["responses"]["200"]["content"] = {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "pokemon1": {
+                                            "type": "object",
+                                            "description": "First Pokemon details"
+                                        },
+                                        "pokemon2": {
+                                            "type": "object",
+                                            "description": "Second Pokemon details"
+                                        },
+                                        "battle_analysis": {
+                                            "type": "object",
+                                            "properties": {
+                                                "pokemon_1": {"type": "string"},
+                                                "pokemon_2": {"type": "string"},
+                                                "analysis": {"type": "string"},
+                                                "reasoning": {"type": "string"},
+                                                "winner": {"type": "string"}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } {
+                                    "summary": "Mewtwo vs Dragonite battle",
+                                    "description": "Detailed analysis of a battle between legendary Mewtwo and pseudo-legendary Dragonite",
+                                    "value": {
+                                        "pokemon1": {
+                                            "name": "Mewtwo",
+                                            "base_stats": {"hp": 106, "attack": 110, "defense": 90, "special_attack": 154, "special_defense": 90, "speed": 130},
+                                            "types": ["Psychic"],
+                                            "abilities": ["Pressure", "Unnerve"],
+                                            "height": 2.0,
+                                            "weight": 122.0,
+                                            "pokemon_details": ["Mewtwo is a legendary Psychic-type Pokemon with exceptional stats across the board."],
+                                            "research_queries": ["Mewtwo legendary status", "Mewtwo in Pokemon lore"]
+                                        },
+                                        "pokemon2": {
+                                            "name": "Dragonite",
+                                            "base_stats": {"hp": 91, "attack": 134, "defense": 95, "special_attack": 100, "special_defense": 100, "speed": 80},
+                                            "types": ["Dragon", "Flying"],
+                                            "abilities": ["Inner Focus", "Multiscale"],
+                                            "height": 2.2,
+                                            "weight": 210.0,
+                                            "pokemon_details": ["Dragonite is a pseudo-legendary Dragon/Flying-type Pokemon with excellent physical attack."],
+                                            "research_queries": ["Dragonite evolution", "Dragonite in the anime"]
+                                        },
+                                        "battle_analysis": {
+                                            "pokemon_1": "mewtwo",
+                                            "pokemon_2": "dragonite",
+                                            "analysis": "Mewtwo has superior special attack and speed stats compared to Dragonite. While Dragonite has higher physical attack, Mewtwo's Psychic typing gives it access to powerful moves that can exploit Dragonite's weaknesses.",
+                                            "reasoning": "Mewtwo's base speed of 130 compared to Dragonite's 80 means it will almost always move first. With a special attack of 154, Mewtwo can use Ice-type special moves that are super effective against Dragonite's Dragon/Flying typing. Additionally, Mewtwo's Pressure ability will cause Dragonite to use more PP for each move, limiting its options in a prolonged battle.",
+                                            "winner": "mewtwo"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                
+                # Add error responses
+                if "responses" in get_op:
+                    get_op["responses"]["404"] = {
+                        "description": "Pokemon not found",
+                        "content": {
+                            "application/json": {
+                                "examples": {
+                                    "Invalid Pokemon Name": {
+                                        "summary": "Pokemon name doesn't exist",
+                                        "description": "When a requested Pokemon doesn't exist in the Pokedex",
+                                        "value": {
+                                            "detail": "Pokemon 'pikachuu' not found"
+                                        }
+                                    },
+                                    "Misspelled Pokemon": {
+                                        "summary": "Misspelled Pokemon name",
+                                        "description": "When a Pokemon name is misspelled",
+                                        "value": {
+                                            "detail": "Pokemon 'bulbasour' not found. Did you mean 'bulbasaur'?"
+                                        }
+                                    },
+                                    "Non-existent Pokemon": {
+                                        "summary": "Made-up Pokemon name",
+                                        "description": "When a completely fictional Pokemon is requested",
+                                        "value": {
+                                            "detail": "Pokemon 'dragonchu' not found. This does not appear to be a valid Pokemon."
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    get_op["responses"]["422"] = {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "examples": {
+                                    "Missing Parameter": {
+                                        "summary": "Missing required parameter",
+                                        "description": "When a required parameter is missing",
+                                        "value": {
+                                            "detail": [
+                                                {
+                                                    "loc": ["query", "pokemon2"],
+                                                    "msg": "field required",
+                                                    "type": "value_error.missing"
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    "Empty Parameter": {
+                                        "summary": "Empty parameter value",
+                                        "description": "When a parameter is provided but empty",
+                                        "value": {
+                                            "detail": [
+                                                {
+                                                    "loc": ["query", "pokemon1"],
+                                                    "msg": "string is too short",
+                                                    "type": "value_error.any_str.min_length",
+                                                    "ctx": {"limit_value": 1}
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    get_op["responses"]["500"] = {
+                        "description": "Internal server error",
+                        "content": {
+                            "application/json": {
+                                "examples": {
+                                    "API Limit Exceeded": {
+                                        "summary": "External API limit exceeded",
+                                        "description": "When an external API rate limit is reached",
+                                        "value": {
+                                            "detail": "API rate limit exceeded. Please try again later."
+                                        }
+                                    },
+                                    "Battle Analysis Error": {
+                                        "summary": "Error during battle analysis",
+                                        "description": "When the battle analysis fails",
+                                        "value": {
+                                            "detail": "An error occurred while analyzing the battle between pikachu and bulbasaur."
+                                        }
+                                    },
+                                    "Research Error": {
+                                        "summary": "Error during Pokemon research",
+                                        "description": "When Pokemon research fails",
+                                        "value": {
+                                            "detail": "An error occurred while researching Pokemon information."
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+    
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
+
+# Custom docs endpoints
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui_html():
+    # Get the default Swagger UI HTML response
+    swagger_ui = get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - Interactive API Documentation",
+        oauth2_redirect_url=app.swagger_ui_oauth2_redirect_url,
+        swagger_js_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js",
+        swagger_css_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css",
+        swagger_favicon_url="https://fastapi.tiangolo.com/img/favicon.png",
+        init_oauth=None,
+        swagger_ui_parameters={
+            "docExpansion": "list",  # Show operations as expanded by default
+            "defaultModelsExpandDepth": 3,  # Expand models to show all properties
+            "defaultModelExpandDepth": 3,  # Expand nested models
+            "tryItOutEnabled": True,  # Enable Try it out by default
+            "persistAuthorization": True,  # Remember auth between page refreshes
+            "filter": True,  # Enable filtering operations
+            "displayRequestDuration": True,  # Show request duration
+            "showExtensions": True,  # Show vendor extensions
+            "showCommonExtensions": True,  # Show common extensions
+        }
+    )
+    
+    # Add custom CSS to the HTML content
+    pokemon_css = """
+    <style>
+        /* Pokemon-themed color scheme */
+        :root {
+            --pokemon-red: #EE1515;
+            --pokemon-blue: #3B4CCA;
+            --pokemon-yellow: #FFDE00;
+            --pokemon-light-blue: #7FCCEC;
+            --pokemon-light-yellow: #FFF4B2;
+            --pokemon-light-red: #FFACAC;
+            --pokemon-gray: #424242;
+            --pokemon-light-gray: #F5F5F5;
+        }
+        
+        /* Main layout and typography */
+        body {
+            font-family: 'Roboto', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        .swagger-ui .topbar { 
+            background-color: var(--pokemon-red);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .swagger-ui .info .title {
+            color: var(--pokemon-blue);
+            font-size: 36px;
+            font-weight: 700;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
+        }
+        
+        .swagger-ui .info {
+            margin: 30px 0;
+            padding: 20px;
+            background-color: var(--pokemon-light-gray);
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+        
+        .swagger-ui .info p {
+            font-size: 16px;
+            line-height: 1.6;
+            color: var(--pokemon-gray);
+        }
+        
+        /* Operation blocks styling */
+        .swagger-ui .opblock {
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-bottom: 15px;
+            transition: all 0.3s ease;
+        }
+        
+        .swagger-ui .opblock:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            transform: translateY(-2px);
+        }
+        
+        .swagger-ui .opblock.opblock-post {
+            border-color: var(--pokemon-blue);
+            background: rgba(59, 76, 202, 0.05);
+        }
+        
+        .swagger-ui .opblock.opblock-get {
+            border-color: var(--pokemon-yellow);
+            background: rgba(255, 222, 0, 0.05);
+        }
+        
+        /* Buttons */
+        .swagger-ui .btn {
+            border-radius: 20px;
+            transition: all 0.2s ease;
+        }
+        
+        .swagger-ui .btn.execute {
+            background-color: var(--pokemon-red);
+            color: white;
+            border-color: var(--pokemon-red);
+            font-weight: bold;
+            font-size: 14px;
+            padding: 10px 25px;
+            box-shadow: 0 2px 5px rgba(238, 21, 21, 0.3);
+        }
+        
+        .swagger-ui .btn.execute:hover {
+            background-color: #d10000;
+            border-color: #d10000;
+            box-shadow: 0 4px 8px rgba(238, 21, 21, 0.4);
+            transform: translateY(-1px);
+        }
+        
+        .swagger-ui .btn.try-out__btn {
+            background-color: var(--pokemon-blue);
+            color: white;
+            border-color: var(--pokemon-blue);
+        }
+        
+        .swagger-ui .btn.try-out__btn:hover {
+            background-color: #2a3aa9;
+            border-color: #2a3aa9;
+        }
+        
+        /* Tables and parameters */
+        .swagger-ui table {
+            box-shadow: 0 1px 5px rgba(0,0,0,0.05);
+            border-radius: 5px;
+            overflow: hidden;
+        }
+        
+        .swagger-ui table tbody tr td {
+            padding: 15px 10px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        
+        .swagger-ui table thead tr th {
+            background-color: var(--pokemon-light-gray);
+            padding: 12px 10px;
+            font-weight: 600;
+        }
+        
+        .swagger-ui .parameter__name {
+            font-weight: bold;
+            font-size: 14px;
+            color: var(--pokemon-blue);
+        }
+        
+        .swagger-ui .parameter__in {
+            font-size: 12px;
+            font-style: italic;
+            color: #777;
+        }
+        
+        /* Examples section */
+        .swagger-ui select {
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            padding: 8px 10px;
+            background-color: white;
+        }
+        
+        .swagger-ui .examples-select {
+            margin-bottom: 10px;
+        }
+        
+        .swagger-ui .examples-select__section-label {
+            font-weight: 600;
+            color: var(--pokemon-blue);
+        }
+        
+        /* Response section */
+            .swagger-ui .responses-wrapper {
+                background-color: var(--pokemon-light-gray);
+                border-radius: 5px;
+                padding: 5px;
+                margin-top: 15px;
+            }
+            
+            .swagger-ui .response-col_status {
+                font-weight: bold;
+                color: var(--pokemon-blue);
+            }
+            
+            .swagger-ui .response-col_status .response-undocumented {
+                font-weight: normal;
+                color: #777;
+            }
+            
+            .swagger-ui .responses-inner h4 {
+                font-size: 16px;
+                margin: 15px 0;
+                color: var(--pokemon-gray);
+            }
+            
+            /* Tabs */
+            .swagger-ui .tab {
+                padding: 0;
+            }
+            
+            .swagger-ui .tab li {
+                font-size: 14px;
+                padding: 10px 15px;
+            }
+            
+            .swagger-ui .tab li.active {
+                background-color: var(--pokemon-light-blue);
+            }
+            
+            /* Models section */
+            .swagger-ui section.models {
+                border-radius: 8px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                margin: 30px 0;
+            }
+            
+            .swagger-ui section.models h4 {
+                font-size: 18px;
+                color: var(--pokemon-blue);
+            }
+            
+            /* Help section */
+            .swagger-help {
+                background-color: var(--pokemon-light-yellow);
+                border-radius: 8px;
+                padding: 20px;
+                margin: 30px 0;
+                border-left: 5px solid var(--pokemon-yellow);
+                box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+            }
+            
+            .swagger-help h3 {
+                margin-top: 0;
+                color: var(--pokemon-red);
+                font-size: 22px;
+                font-weight: 600;
+            }
+            
+            .swagger-help ol {
+                padding-left: 25px;
+            }
+            
+            .swagger-help li {
+                margin-bottom: 12px;
+                line-height: 1.5;
+            }
+            
+            .swagger-help strong {
+                color: var(--pokemon-blue);
+            }
+            
+            .swagger-help .tip {
+                background-color: white;
+                padding: 10px 15px;
+                border-radius: 5px;
+                border-left: 3px solid var(--pokemon-red);
+                margin-top: 15px;
+                font-weight: 500;
+            }
+            
+            /* Pokemon logo */
+            .pokemon-logo {
+                text-align: center;
+                margin: 20px 0;
+            }
+            
+            .pokemon-logo img {
+                max-width: 250px;
+                height: auto;
+            }
+        </style>
+        <div class="pokemon-logo">
+            <img src="https://upload.wikimedia.org/wikipedia/commons/9/98/International_Pok%C3%A9mon_logo.svg" alt="Pokemon Logo">
+        </div>
+        <div class="swagger-help">
+            <h3>How to Test the Pokemon AI API</h3>
+            <ol>
+                <li>Expand an endpoint by clicking on it (either <strong>POST /chat</strong> or <strong>GET /battle</strong>)</li>
+                <li>Click the <strong>"Try it out"</strong> button to enable interactive testing</li>
+                <li>For the <strong>chat</strong> endpoint, select from the example messages or write your own</li>
+                <li>For the <strong>battle</strong> endpoint, select two Pokemon from the dropdown examples</li>
+                <li>Click <strong>"Execute"</strong> to send the request to the API</li>
+                <li>View the detailed response below, including Pokemon research and battle analysis</li>
+            </ol>
+            <div class="tip">
+                <strong>Tip:</strong> Use the example dropdown menus for quick testing of different Pokemon combinations and queries!
+            </div>
+        </div>
+        """
+    
+    # Get the HTML content from the response
+    html_content = swagger_ui.body.decode("utf-8")
+    
+    # Insert the custom CSS and HTML before the closing </body> tag
+    html_content = html_content.replace("</body>", f"{pokemon_css}</body>")
+    
+    # Create a new response with the modified HTML content
+    return HTMLResponse(content=html_content)
+
+@app.get("/redoc", include_in_schema=False)
+async def redoc_html():
+    return get_redoc_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - ReDoc",
+        redoc_js_url="https://cdn.jsdelivr.net/npm/redoc@next/bundles/redoc.standalone.js",
+        redoc_favicon_url="https://fastapi.tiangolo.com/img/favicon.png",
+        with_google_fonts=True
+    )

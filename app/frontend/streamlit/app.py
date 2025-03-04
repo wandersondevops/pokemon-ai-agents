@@ -7,6 +7,14 @@ import requests
 import os
 import sys
 
+# ✅ Move `st.set_page_config()` to the first Streamlit command!
+st.set_page_config(
+    page_title="Pokemon AI Agents",
+    page_icon="🐾",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
 # Fetch API URL from environment variables (ngrok-friendly)
 API_URL = os.getenv("API_URL", None)
 API_HOST = os.getenv("API_HOST", "localhost")
@@ -24,14 +32,6 @@ EXTERNAL_API_URL = API_URL
 # Debugging: Log API connection info
 print(f"\n\n===> Connecting to API at: {API_URL}{API_PREFIX} <===\n\n", file=sys.stderr)
 st.write(f"🔗 Connecting to API at: {API_URL}{API_PREFIX}")
-
-# Streamlit page config
-st.set_page_config(
-    page_title="Pokemon AI Agents",
-    page_icon="🐾",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
 
 # Header
 st.markdown("<h1 style='text-align: center; color: #e53935;'>Pokemon AI Agents</h1>", unsafe_allow_html=True)
@@ -110,7 +110,7 @@ with tab3:
         "API_PORT": API_PORT
     })
 
-#API Documentation Tab
+# API Documentation Tab
 with tab4:
     st.header("API Documentation")
     st.markdown(f"""
@@ -119,4 +119,3 @@ with tab4:
     - **Swagger UI**: [Open Swagger Docs]({API_URL}/docs)
     - **ReDoc**: [Open ReDoc Docs]({API_URL}/redoc)
     """)
-

@@ -25,6 +25,9 @@ from app.utils.helpers.langsmith_integration import (
     get_recent_runs
 )
 
+# Configuration variables
+use_langgraph = True
+
 # Create router
 router = APIRouter(
     prefix="/pokemon",
@@ -68,7 +71,7 @@ async def chat(
         # Configure LangSmith - this is now handled automatically in run_with_langsmith
         
         # Check if we should use the LangGraph implementation
-        use_langgraph = True
+        # use_langgraph is now defined at the module level
         
         if use_langgraph:
             # Create the LangSmith agent
@@ -232,9 +235,12 @@ async def chat(
                 
                 pokemon_research[pokemon_name.capitalize()] = simplified_result
             
-            # We don't analyze battles in the chat endpoint
-            # Battle analysis is only available through the dedicated /battle endpoint
-            response["battle_analysis"] = None
+            # If two Pokemon are mentioned, analyze the battle
+            if len(pokemon_research) == 2:
+                battle_analysis = analyze_pokemon_battle(pokemon_research, llm)
+                response["battle_analysis"] = battle_analysis
+            else:
+                response["battle_analysis"] = None
             
             # If there are Pokemon results, return only the Pokemon research data
             if pokemon_research:

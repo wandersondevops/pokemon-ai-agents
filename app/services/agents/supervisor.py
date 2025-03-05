@@ -212,7 +212,7 @@ def process_search_results(query: str, search_results: Any, llm: ChatOpenAI) -> 
                         sources.append({
                             "title": title or 'No title',
                             "url": url,
-                            "snippet": content[:200] + "..." if len(content) > 200 else content
+                            "snippet": content[:1000] + "..." if len(content) > 1000 else content
                         })
     except Exception:
         return {

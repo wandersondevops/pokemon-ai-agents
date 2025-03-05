@@ -202,7 +202,7 @@ graph_builder = StateGraph(State)
 
 tool = TavilySearchResults(max_results=2)
 tools = [tool]
-llm = ChatOpenAI(model_name='gpt-4o-mini', temperature=0.7)
+llm = ChatOpenAI(model_name='gpt-4o', temperature=0.7)
 llm_with_tools = llm.bind(tools=tools)
 
 def chatbot(state: State):

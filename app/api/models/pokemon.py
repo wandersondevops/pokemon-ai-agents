@@ -48,16 +48,40 @@ class SupervisorResult(BaseModel):
     answer: str = Field(..., description="Final answer after reflection and analysis")
     reflection: Dict[str, str] = Field(..., description="Reflection on the question and answer process")
     search_queries: Optional[List[str]] = Field(None, description="Queries sent to the search API")
+    needs_search: bool = Field(False, description="Indicates if the query requires a search")
     is_pokemon_query: bool = Field(..., description="Indicates if the query is about Pokémon")
     pokemon_names: Optional[List[str]] = Field(None, description="List of Pokémon names extracted from the query")
 
+class FinalAnswer(BaseModel):
+    """Model for the final answer generated from search results."""
+    answer: str = Field(..., description="Final answer generated from search results")
+    sources: List[Dict[str, Any]] = Field(..., description="Sources used to generate the answer")
+
 class ChatResponse(BaseModel):
     """Response model for the chat endpoint."""
-    response: Optional[Dict[str, Any]] = Field(None, description="Response containing supervisor result, Pokemon research, and battle analysis if applicable")
+    response: Optional[Dict[str, Any]] = Field(None, description="Response containing supervisor result, Pokemon research, battle analysis, and final answer if applicable")
     
-    # Allow direct Pokemon data to be returned
+    # Allow direct Pokemon data to be returned and provide example schema
     model_config = {
-        "extra": "allow"
+        "extra": "allow",
+        "json_schema_extra": {
+            "example": {
+                "response": {
+                    "supervisor_result": {
+                        "answer": "Example answer",
+                        "reflection": {"reasoning": "Example reasoning"},
+                        "needs_search": True,
+                        "is_pokemon_query": False
+                    },
+                    "pokemon_research": {},
+                    "battle_analysis": None,
+                    "final_answer": {
+                        "answer": "Example final answer",
+                        "sources": []
+                    }
+                }
+            }
+        }
     }
 
 class BattleResponse(BaseModel):

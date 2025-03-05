@@ -6,6 +6,7 @@ This module contains the routes for the Pokemon-related endpoints.
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body, status
 from typing import Dict, Any, List, Annotated
+import json
 
 from langchain_openai import ChatOpenAI
 from langchain_community.utilities.tavily_search import TavilySearchAPIWrapper
@@ -13,7 +14,8 @@ from langchain_community.utilities.tavily_search import TavilySearchAPIWrapper
 from app.core.dependencies import get_llm, get_search_wrapper
 from app.api.models.pokemon import ChatRequest, ChatResponse, BattleResponse
 from app.services.pokemon.research import research_pokemon, analyze_pokemon_battle
-from app.services.agents.supervisor import process_query
+from app.services.agents.supervisor import process_query, process_search_results
+from app.utils.helpers.tool_executor import execute_tools
 
 # Create router
 router = APIRouter(
@@ -62,8 +64,87 @@ async def chat(
         response = {
             "supervisor_result": supervisor_result,
             "pokemon_research": {},
-            "battle_analysis": None
+            "battle_analysis": None,
+            "final_answer": None
         }
+        
+        # If search is needed, process the search results and generate a final answer
+        if supervisor_result.get("needs_search", False):
+            # Create a mock state with the original question
+            from langchain_core.messages import AIMessage, HumanMessage
+            mock_state = [
+                HumanMessage(content=request.message),
+                AIMessage(content=json.dumps(supervisor_result))
+            ]
+            
+            # Execute the search using the original question
+            from app.utils.helpers.tool_executor import ToolExecutor
+            tool_executor = ToolExecutor([search_wrapper])
+            
+            try:
+                search_results = execute_tools(mock_state, tool_executor)
+            except Exception as e:
+                search_results = []
+                response["final_answer"] = {"answer": f"Error executing search: {str(e)}", "sources": []}
+            
+            # If search results were found, process them
+            if search_results and len(search_results) > 0:
+                # Extract the search results from the ToolMessage
+                search_data = search_results[0].content
+                
+                # If search_data is a string, try to parse it as JSON
+                if isinstance(search_data, str):
+                    try:
+                        # First, try to parse it directly
+                        parsed_data = json.loads(search_data)
+                        search_data = parsed_data
+                    except json.JSONDecodeError:
+                        # If that fails, try to extract the JSON part
+                        try:
+                            # Extract the part that looks like JSON
+                            import re
+                            json_match = re.search(r'\{"[^"]+":\s*\[.+\]\}', search_data)
+                            if json_match:
+                                json_str = json_match.group(0)
+                                parsed_data = json.loads(json_str)
+                                search_data = parsed_data
+                            else:
+                                # Try to fix single quotes to double quotes
+                                import ast
+                                try:
+                                    # Use ast.literal_eval to safely evaluate the string as a Python literal
+                                    python_obj = ast.literal_eval(search_data)
+                                    # Convert to proper JSON
+                                    search_data = python_obj
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                
+                try:
+                    # Process the search results to generate a final answer
+                    final_answer = process_search_results(request.message, search_data, llm)
+                    
+                    # Ensure final_answer is a dictionary with answer and sources
+                    if isinstance(final_answer, dict):
+                        if "answer" not in final_answer:
+                            final_answer["answer"] = "No answer was generated from the search results."
+                        if "sources" not in final_answer:
+                            final_answer["sources"] = []
+                    else:
+                        # If final_answer is not a dictionary, convert it to one
+                        final_answer = {
+                            "answer": str(final_answer),
+                            "sources": []
+                        }
+                    
+                    # Add the final answer to the response
+                    response["final_answer"] = final_answer
+                except Exception as e:
+                    # Add error information to the response
+                    response["final_answer"] = {"answer": f"Error processing search results: {str(e)}", "sources": []}
+            else:
+                response["final_answer"] = {"answer": "No search results were found for your query.", "sources": []}
         
         # If it's a Pokemon query, research the Pokemon
         if supervisor_result.get("is_pokemon_query", False):

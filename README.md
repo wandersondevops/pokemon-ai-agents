@@ -425,7 +425,7 @@ The Swagger UI includes a variety of examples for testing:
 **Chat Endpoint Examples:**
 - **Pokémon Research**: Pikachu, Charizard, Mewtwo
 - **Pokémon Battle Comparisons**: Pikachu vs Bulbasaur, Charizard vs Blastoise
-- **General Queries**: Weather information, Exercise benefits
+- **General Queries**: Exercise benefits, General knowledge questions
 
 **Battle Endpoint Examples:**
 - Pikachu vs Bulbasaur

@@ -26,22 +26,10 @@ supervisor_prompt_template = ChatPromptTemplate.from_messages(
                - Extract up to TWO Pokémon names mentioned in the query and include them in the 'pokemon_names' array
                - If more than two Pokémon are mentioned, prioritize the ones that appear to be the main focus of the query
                - In the 'answer' field, only explain that you're delegating the question to the Researcher Agent
-            4. For general knowledge questions that you DO NOT know the answer to or that require current or specific information (like weather, news, etc.):
-               - ONLY in these cases, provide concise yet precise search queries in the 'search_queries' array that would help find this information
-               - Follow these guidelines for crafting effective search queries:
-                 * Include only the most essential information in each query - aim for brevity while maintaining precision
-                 * For the first query, include the original user question with minimal modifications
-                 * For subsequent queries, focus on different aspects of the question using specialized terminology
-                 * Include specific locations, dates, and exact names when relevant
-                 * For time-sensitive queries, add the current date with time zone when relevant
-                 * Use quotation marks around exact phrases and Boolean operators (AND, OR, NOT) when needed
-                 * For domain-specific queries (weather, science, medical, etc.), include only the most relevant technical terms
-                 * For weather queries:
-                   - Include one query with the basic question (e.g., "weather in Beijing today")
-                   - Include one query with technical terms (e.g., "current weather conditions Beijing China March 2, 2025")
-                   - Include one query with specific parameters (e.g., "Beijing temperature humidity wind precipitation March 2, 2025")
-               - Include 3-4 search queries, starting with the most general query, then adding more specific queries
-               - Each query should be concise (under 15 words) while capturing a different aspect of the information needed
+            4. For general knowledge questions that you DO NOT know the answer to or that require current or specific information (like news, sports results, etc.):
+               - For these cases, simply include a single placeholder query in the 'search_queries' array
+               - Set search_queries to ["SEARCH_NEEDED"]
+               - The system will automatically use the original question for search
                - In the 'answer' field, explain that you need to search for this information and what specific details you're looking for
             5. ONLY include the 'search_queries' array when you don't know the answer. OMIT this field entirely for questions you can answer directly.
             6. When analyzing search results:

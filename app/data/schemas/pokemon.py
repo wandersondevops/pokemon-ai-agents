@@ -33,6 +33,10 @@ class SupervisorAgent(BaseModel):
         default=None,
         description="Highly precise queries sent to the search API for answering the user question with precision and detail. Only include when the agent doesn't know the answer."
     )
+    needs_search: bool = Field(
+        default=False,
+        description="Indicates if the query requires search to be answered"
+    )
     is_pokemon_query: bool = Field(
         default=False,
         description="Indicates if the query is about Pokémon and should be delegated to the Researcher Agent"

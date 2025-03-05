@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 class ChatRequest(BaseModel):
     """Request model for the chat endpoint."""
     message: str = Field(..., description="User's message or query")
+    client_info: Optional[Dict[str, Any]] = Field(None, description="Optional client information for tracking and analytics")
 
 # Response Models
 class PokemonStats(BaseModel):

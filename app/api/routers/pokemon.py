@@ -5,8 +5,9 @@ This module contains the routes for the Pokemon-related endpoints.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body, status
-from typing import Dict, Any, List, Annotated
+from typing import Dict, Any, List, Annotated, Optional
 import json
+import datetime
 
 from langchain_openai import ChatOpenAI
 from langchain_community.utilities.tavily_search import TavilySearchAPIWrapper
@@ -16,6 +17,13 @@ from app.api.models.pokemon import ChatRequest, ChatResponse, BattleResponse
 from app.services.pokemon.research import research_pokemon, analyze_pokemon_battle
 from app.services.agents.supervisor import process_query, process_search_results
 from app.utils.helpers.tool_executor import execute_tools
+from app.utils.helpers.langsmith_integration import (
+    configure_langsmith, 
+    create_langsmith_agent, 
+    run_with_langsmith,
+    add_to_auto_dataset,
+    get_recent_runs
+)
 
 # Create router
 router = APIRouter(
@@ -57,8 +65,64 @@ async def chat(
 
     """
     try:
-        # Process the query using the supervisor agent
-        supervisor_result = process_query(request.message, llm, search_wrapper)
+        # Configure LangSmith - this is now handled automatically in run_with_langsmith
+        
+        # Check if we should use the LangGraph implementation
+        use_langgraph = True
+        
+        if use_langgraph:
+            # Create the LangSmith agent
+            agent = create_langsmith_agent(llm, search_wrapper)
+            
+            # Run the agent with LangSmith tracing and automatic dataset creation
+            result = run_with_langsmith(
+                agent,
+                request.message,
+                metadata={
+                    "source": "api", 
+                    "endpoint": "chat",
+                    "timestamp": str(datetime.datetime.now()),
+                    "client_info": request.client_info if hasattr(request, "client_info") else None
+                },
+                auto_create_dataset=True  # Automatically add to dataset for future evaluation
+            )
+            
+            # Extract messages, Pokemon research, and battle analysis from the state
+            messages = result.get("messages", [])
+            pokemon_research_data = result.get("pokemon_research_data", {})
+            battle_analysis_result = result.get("battle_analysis_result")
+            search_results = result.get("search_results")
+            
+            # If we have Pokemon research, return it directly
+            if pokemon_research_data:
+                # For battle queries, include the battle analysis in the response
+                if battle_analysis_result:
+                    pokemon_research_data["battle_analysis"] = battle_analysis_result
+                return pokemon_research_data
+            
+            # If we have search results, create a final answer
+            if search_results:
+                final_answer = process_search_results(request.message, search_results, llm)
+            else:
+                final_answer = None
+            
+            # Create a supervisor result from the last AI message
+            last_ai_message = None
+            for message in reversed(messages):
+                if hasattr(message, 'type') and message.type == "ai":
+                    last_ai_message = message
+                    break
+            
+            supervisor_result = {
+                "answer": last_ai_message.content if last_ai_message else "",
+                "reflection": {"reasoning": "Processed using LangGraph"},
+                "is_pokemon_query": bool(pokemon_research_data),
+                "pokemon_names": list(pokemon_research_data.keys()) if pokemon_research_data else None,
+                "needs_search": bool(search_results)
+            }
+        else:
+            # Process the query using the original supervisor agent
+            supervisor_result = process_query(request.message, llm, search_wrapper)
         
         # Initialize response
         response = {
@@ -168,16 +232,16 @@ async def chat(
                 
                 pokemon_research[pokemon_name.capitalize()] = simplified_result
             
-            # If there are exactly 2 Pokemon, analyze a potential battle
-            if len(pokemon_names) == 2:
-                battle_analysis = analyze_pokemon_battle(pokemon_research, llm)
-                response["battle_analysis"] = battle_analysis
+            # We don't analyze battles in the chat endpoint
+            # Battle analysis is only available through the dedicated /battle endpoint
+            response["battle_analysis"] = None
             
             # If there are Pokemon results, return only the Pokemon research data
             if pokemon_research:
                 # For battle queries, include the battle analysis in the response
-                if response["battle_analysis"]:
-                    pokemon_research["battle_analysis"] = response["battle_analysis"]
+                if response.get("battle_analysis"):
+                    # Add the battle analysis as a top-level key in the response
+                    return {**pokemon_research, "battle_analysis": response["battle_analysis"]}
                 return pokemon_research
         
         # Only return the simplified Pokemon data if it's a Pokemon query
@@ -188,6 +252,55 @@ async def chat(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An error occurred while processing the request: {str(e)}"
+        )
+
+@router.get("/analytics/runs", status_code=status.HTTP_200_OK)
+async def get_langsmith_runs(
+    limit: int = Query(10, description="Number of runs to retrieve", ge=1, le=100),
+    endpoint: Optional[str] = Query(None, description="Filter by endpoint (chat, battle, etc.)"),
+    pokemon_name: Optional[str] = Query(None, description="Filter by Pokemon name")
+):
+    """
+    Get recent LangSmith runs for analytics purposes.
+    
+    This endpoint retrieves recent runs from LangSmith with optional filtering
+    by endpoint or Pokemon name. It provides valuable insights into how the
+    system is being used and performing.
+    
+    Args:
+        limit: Number of runs to retrieve (default: 10, max: 100)
+        endpoint: Optional filter by endpoint (chat, battle)
+        pokemon_name: Optional filter by Pokemon name
+        
+    Returns:
+        List of recent LangSmith runs with metadata
+    """
+    try:
+        # Build filter criteria
+        filter_criteria = {}
+        if endpoint:
+            filter_criteria["endpoint"] = endpoint
+        if pokemon_name:
+            # Check both pokemon1 and pokemon2 fields
+            filter_criteria["pokemon_name"] = pokemon_name
+            
+        # Get recent runs with filtering
+        runs = get_recent_runs(limit=limit, filter_criteria=filter_criteria)
+        
+        # Return the runs
+        return {
+            "runs": runs,
+            "count": len(runs),
+            "filters_applied": {
+                "limit": limit,
+                "endpoint": endpoint,
+                "pokemon_name": pokemon_name
+            }
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred while retrieving LangSmith runs: {str(e)}"
         )
 
 @router.get("/battle", response_model=BattleResponse, status_code=status.HTTP_200_OK)
@@ -204,7 +317,8 @@ async def battle(
         min_length=2,
         max_length=50
     )],
-    llm: ChatOpenAI = Depends(get_llm)
+    llm: ChatOpenAI = Depends(get_llm),
+    search_wrapper: TavilySearchAPIWrapper = Depends(get_search_wrapper)
 ):
     """
     Analyze a battle between two Pokemon.
@@ -226,6 +340,39 @@ async def battle(
 
     """
     try:
+        # Try to use LangGraph with LangSmith tracing first
+        try:
+            # Create a battle query
+            battle_query = f"Compare {pokemon1} and {pokemon2} in a Pokemon battle. Who would win and why?"
+            
+            # Create the LangSmith agent
+            agent = create_langsmith_agent(llm, search_wrapper)
+            
+            # Run the agent with LangSmith tracing
+            result = run_with_langsmith(
+                agent,
+                battle_query,
+                metadata={
+                    "source": "api", 
+                    "endpoint": "battle",
+                    "pokemon1": pokemon1,
+                    "pokemon2": pokemon2,
+                    "timestamp": str(datetime.datetime.now())
+                },
+                auto_create_dataset=True  # Automatically add to dataset for future evaluation
+            )
+            
+            # If we have battle analysis in the result, return it
+            if result and "battle_analysis" in result:
+                return result
+                
+            # If LangGraph worked but didn't produce battle analysis, fall back to traditional approach
+        except Exception as e:
+            # Log the error but continue with the traditional approach
+            import logging
+            logging.error(f"Error using LangGraph for battle analysis: {e}")
+        
+        # Traditional approach as fallback
         # Research both Pokemon
         pokemon1_research = research_pokemon(pokemon1, llm)
         pokemon2_research = research_pokemon(pokemon2, llm)
